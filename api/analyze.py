@@ -1,29 +1,26 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from openai import OpenAI
 import os
 
 app = FastAPI()
 
-# CORS for frontend
+# Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Replace "*" with your frontend domain in production
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
+# Load OpenAI API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise Exception("OPENAI_API_KEY not set")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-class ResumeRequest(BaseModel):
-    jd: str
-    resume: str
-
+# Default response if AI fails
 def default_response():
     return {
         "Score": 0,
@@ -34,19 +31,26 @@ def default_response():
         "Email": ""
     }
 
-@app.post("/analyze")
-async def analyze_resume(data: ResumeRequest):
+@app.post("/")
+async def analyze_resume(
+    jd: str = Form(...),
+    resume: str = Form(...)
+):
+    """
+    Accepts form-data (jd, resume) and returns JSON evaluation.
+    """
     prompt = f"""
 You are an expert HR Recruitment AI.
+
 Evaluate the following Resume against the Job Description.
 
 JOB DESCRIPTION:
-{data.jd}
+{jd}
 
 RESUME:
-{data.resume}
+{resume}
 
-Return strictly valid JSON only, following this example:
+Return strictly valid JSON only, following this exact format:
 
 {{
   "Score": 85,
@@ -57,7 +61,9 @@ Return strictly valid JSON only, following this example:
   "Email": "john.doe@example.com"
 }}
 """
+
     try:
+        # Async call to OpenAI
         response = await client.chat.completions.acreate(
             model="gpt-4o-mini",
             messages=[
@@ -90,4 +96,3 @@ Return strictly valid JSON only, following this example:
     except Exception as e:
         print("OpenAI API error:", e)
         return default_response()
-
