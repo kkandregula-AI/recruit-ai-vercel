@@ -78,7 +78,7 @@ Return strictly valid JSON only, following this exact format:
   "Score": 85,
   "Role" : AI Engineer,
   "SkillsetMatch": "Python, FastAPI, Machine Learning",
-  "MissingSkills": "Agentic AI, Generative AI, Mainframe, DB2, CICS, DevOps",
+  "MissingSkills": "Agentic AI, Generative AI, DevOps",
   "Summary": "Candidate is highly suitable for the role. He has extensive Experience in Python, Artificial Intelligence and excellent coding and analytical skills",
   "Recommendation": "Shortlist",
   "Name": "John Doe",
