@@ -39,6 +39,7 @@ def default_response():
     return {
         "Score": 0,
         "SkillsetMatch": "",
+        "MissingSkills": "",
         "Summary": "",
         "Recommendation": "Reject",
         "Name": "",
@@ -126,7 +127,7 @@ Return strictly valid JSON only, following this exact format:
             result["Recommendation"] = "Reject"
 
         # Ensure all other fields exist
-        for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
+        for key in ["SkillsetMatch", "MissingSkills", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
 
