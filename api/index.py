@@ -4,31 +4,27 @@ from pydantic import BaseModel
 from openai import OpenAI
 import os
 import asyncio
+import json
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with frontend domain in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load OpenAI API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise Exception("OPENAI_API_KEY not set")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Pydantic model for JSON input
 class ResumeRequest(BaseModel):
     jd: str
     resume: str
 
-# Default JSON response if GPT fails
 def default_response():
     return {
         "Score": 0,
@@ -41,8 +37,7 @@ def default_response():
 
 @app.post("/")
 async def analyze_resume(data: ResumeRequest):
-    # Truncate inputs to avoid serverless timeout
-    jd = data.jd[:2000]
+    jd = data.jd[:2000]      # truncate to avoid serverless timeout
     resume = data.resume[:2000]
 
     prompt = f"""
@@ -77,12 +72,19 @@ Return strictly valid JSON only, following this exact format:
                     {"role": "system", "content": "Return strictly valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                response_format={"type": "json_object"}
+                # Do NOT rely on json_object; treat as text
             ),
-            timeout=8  # seconds
+            timeout=8
         )
 
-        result = response.choices[0].message.content
+        raw_content = response.choices[0].message.content
+        print("GPT raw output:", raw_content)
+
+        try:
+            result = json.loads(raw_content)
+        except Exception as e:
+            print("Failed to parse GPT output:", e)
+            return default_response()
 
         # Validate Score
         try:
@@ -94,7 +96,7 @@ Return strictly valid JSON only, following this exact format:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure all other fields exist as strings
+        # Ensure other fields exist
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
