@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/analyze-resume.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/analyze-resume",
+      "dest": "api/analyze-resume.py"
+    }
+  ]
+}
