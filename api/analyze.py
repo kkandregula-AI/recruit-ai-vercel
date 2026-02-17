@@ -3,9 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 import os
 
+# Initialize FastAPI
 app = FastAPI()
 
-# Enable CORS for frontend
+# Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Replace "*" with your frontend domain in production
@@ -13,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load OpenAI API key
+# Load OpenAI API key from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise Exception("OPENAI_API_KEY not set")
@@ -63,7 +64,7 @@ Return strictly valid JSON only, following this exact format:
 """
 
     try:
-        # Async call to OpenAI
+        # Async call to GPT-4o-mini
         response = await client.chat.completions.acreate(
             model="gpt-4o-mini",
             messages=[
@@ -86,7 +87,7 @@ Return strictly valid JSON only, following this exact format:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure other fields exist
+        # Ensure all other fields exist as strings
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
