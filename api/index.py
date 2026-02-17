@@ -3,15 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 import os
-import asyncio
 import json
 
 # -------------------------------
-# FastAPI app setup
+# FastAPI setup
 # -------------------------------
 app = FastAPI()
 
-# CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # replace "*" with frontend domain in production
@@ -29,7 +27,7 @@ if not OPENAI_API_KEY:
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------
-# Pydantic model for input
+# Input model
 # -------------------------------
 class ResumeRequest(BaseModel):
     jd: str
@@ -52,10 +50,10 @@ def default_response():
 # POST endpoint
 # -------------------------------
 @app.post("/")
-async def analyze_resume(data: ResumeRequest):
-    # Truncate inputs to avoid timeout / memory issues
-    jd = data.jd[:2000]
-    resume = data.resume[:2000]
+def analyze_resume(data: ResumeRequest):
+    # Truncate inputs to avoid serverless timeout / large token issues
+    jd = data.jd[:1000]
+    resume = data.resume[:1000]
 
     prompt = f"""
 You are an expert HR Recruitment AI.
@@ -81,26 +79,25 @@ Return strictly valid JSON only, following this exact format:
 """
 
     try:
-        # Async GPT call with timeout
-        response = await asyncio.wait_for(
-            client.chat.completions.acreate(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a JSON-only HR assistant. NEVER output any text outside of JSON. Output only valid JSON."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-            ),
-            timeout=8  # seconds
+        # -------------------------------
+        # Synchronous GPT call (reliable on serverless)
+        # -------------------------------
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a JSON-only HR assistant. NEVER output any text outside of JSON. Only return valid JSON."
+                },
+                {"role": "user", "content": prompt}
+            ],
         )
 
         # Raw GPT output
         raw_content = response.choices[0].message.content.strip()
         print("GPT raw output:", raw_content)
 
-        # Extract first JSON object block
+        # Extract first JSON block safely
         start = raw_content.find("{")
         end = raw_content.rfind("}") + 1
         if start == -1 or end == -1:
@@ -108,11 +105,11 @@ Return strictly valid JSON only, following this exact format:
 
         raw_json = raw_content[start:end]
 
-        # Parse JSON safely
+        # Parse JSON
         try:
             result = json.loads(raw_json)
         except Exception as e:
-            print("JSON parse failed:", e, "Raw:", raw_json)
+            print("Failed to parse GPT output:", e)
             return default_response()
 
         # Validate Score
@@ -125,7 +122,7 @@ Return strictly valid JSON only, following this exact format:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure all other fields exist as strings
+        # Ensure all other fields exist
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
