@@ -25,7 +25,7 @@ class ResumeRequest(BaseModel):
     jd: str
     resume: str
 
-@app.post("/analyze-resume")
+@app.post("/")
 async def analyze_resume(data: ResumeRequest):
 
     prompt = f"""
