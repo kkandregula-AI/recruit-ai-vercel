@@ -12,7 +12,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # replace "*" with frontend domain in production
+    allow_origins=["*"],  # replace "*" with your frontend domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -22,9 +22,8 @@ app.add_middleware(
 # -------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise Exception("OPENAI_API_KEY not set")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+    print("ERROR: OPENAI_API_KEY is NOT set!")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # -------------------------------
 # Input model
@@ -51,6 +50,12 @@ def default_response():
 # -------------------------------
 @app.post("/")
 def analyze_resume(data: ResumeRequest):
+    # Safety check: API key must be set
+    if not OPENAI_API_KEY or not client:
+        return {
+            "error": "OPENAI_API_KEY is not set. Please configure it in your environment variables."
+        }
+
     # Truncate inputs to avoid serverless timeout / large token issues
     jd = data.jd[:1000]
     resume = data.resume[:1000]
@@ -79,15 +84,13 @@ Return strictly valid JSON only, following this exact format:
 """
 
     try:
-        # -------------------------------
-        # Synchronous GPT call (reliable on serverless)
-        # -------------------------------
+        # Synchronous GPT call (reliable in serverless)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a JSON-only HR assistant. NEVER output any text outside of JSON. Only return valid JSON."
+                    "content": "You are a JSON-only HR assistant. NEVER output text outside JSON."
                 },
                 {"role": "user", "content": prompt}
             ],
