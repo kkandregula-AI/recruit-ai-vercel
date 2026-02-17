@@ -1,15 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from openai import OpenAI
 import os
 
 app = FastAPI()
 
-# Enable CORS
+# Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Can restrict to your frontend domain if needed
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -21,12 +20,7 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Request model
-class ResumeRequest(BaseModel):
-    jd: str
-    resume: str
-
-# Default response template
+# Default response if AI fails
 def default_response():
     return {
         "Score": 0,
@@ -37,34 +31,39 @@ def default_response():
         "Email": ""
     }
 
-# POST endpoint
-@app.post("/")
-async def analyze_resume(data: ResumeRequest):
+@app.post("/analyze")
+async def analyze_resume(
+    jd: str = Form(...),
+    resume: str = Form(...)
+):
+    """
+    Accepts form-data (jd, resume) and returns JSON evaluation.
+    """
     prompt = f"""
 You are an expert HR Recruitment AI.
 
-Evaluate the Resume against the Job Description.
+Evaluate the following Resume against the Job Description.
 
 JOB DESCRIPTION:
-{data.jd}
+{jd}
 
 RESUME:
-{data.resume}
+{resume}
 
-Return strictly valid JSON only:
+Return strictly valid JSON only, following this exact format:
 
 {{
-  "Score": number (0-100),
-  "SkillsetMatch": string,
-  "Summary": string,
-  "Recommendation": "Shortlist or Reject",
-  "Name": string,
-  "Email": string
+  "Score": 85,
+  "SkillsetMatch": "Python, FastAPI, Machine Learning",
+  "Summary": "Candidate is highly suitable for the role.",
+  "Recommendation": "Shortlist",
+  "Name": "John Doe",
+  "Email": "john.doe@example.com"
 }}
 """
 
     try:
-        # Call OpenAI
+        # Call GPT-4o-mini
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -74,10 +73,10 @@ Return strictly valid JSON only:
             response_format={"type": "json_object"}
         )
 
-        # Extract result
-        result = response.choices[0].message.content  # Should already be dict
+        result = response.choices[0].message.content
+        print("MODEL OUTPUT:", result)
 
-        # Ensure Score is 0-100 integer
+        # Validate Score
         try:
             result["Score"] = max(0, min(100, round(float(result.get("Score", 0)))))
         except (ValueError, TypeError):
@@ -87,7 +86,7 @@ Return strictly valid JSON only:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure all other fields exist as strings
+        # Ensure other fields exist
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
@@ -95,8 +94,5 @@ Return strictly valid JSON only:
         return result
 
     except Exception as e:
-        # Log the error if you want (print or proper logger)
         print(f"OpenAI API error: {e}")
-        # Return default JSON response
         return default_response()
-
