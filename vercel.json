@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/analyze.py": {
-      "runtime": "vercel-python@1.1.0"
-    }
-  }
-}

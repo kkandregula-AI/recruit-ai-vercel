@@ -3,25 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 import os
 
-# Initialize FastAPI
 app = FastAPI()
 
-# Enable CORS for frontend access
+# Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace "*" with your frontend domain in production
+    allow_origins=["*"],  # Replace with your frontend domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load OpenAI API key from environment
+# Load OpenAI API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise Exception("OPENAI_API_KEY not set")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Default response if AI fails
 def default_response():
     return {
         "Score": 0,
@@ -37,9 +35,6 @@ async def analyze_resume(
     jd: str = Form(...),
     resume: str = Form(...)
 ):
-    """
-    Accepts form-data (jd, resume) and returns JSON evaluation.
-    """
     prompt = f"""
 You are an expert HR Recruitment AI.
 
@@ -51,7 +46,7 @@ JOB DESCRIPTION:
 RESUME:
 {resume}
 
-Return strictly valid JSON only, following this exact format:
+Return strictly valid JSON only, following this format:
 
 {{
   "Score": 85,
@@ -62,9 +57,8 @@ Return strictly valid JSON only, following this exact format:
   "Email": "john.doe@example.com"
 }}
 """
-
     try:
-        # Async call to GPT-4o-mini
+        # Async call to OpenAI GPT
         response = await client.chat.completions.acreate(
             model="gpt-4o-mini",
             messages=[
@@ -75,7 +69,6 @@ Return strictly valid JSON only, following this exact format:
         )
 
         result = response.choices[0].message.content
-        print("MODEL OUTPUT:", result)
 
         # Validate Score
         try:
@@ -87,7 +80,7 @@ Return strictly valid JSON only, following this exact format:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure all other fields exist as strings
+        # Ensure other fields exist
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
