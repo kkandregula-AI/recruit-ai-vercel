@@ -3,17 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 import os
 
-app = FastAPI()
+app = FastAPI()  # <-- Vercel auto-detects this
 
-# Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with your frontend domain in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load OpenAI API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise Exception("OPENAI_API_KEY not set")
@@ -58,7 +56,6 @@ Return strictly valid JSON only, following this format:
 }}
 """
     try:
-        # Async call to OpenAI GPT
         response = await client.chat.completions.acreate(
             model="gpt-4o-mini",
             messages=[
@@ -70,17 +67,14 @@ Return strictly valid JSON only, following this format:
 
         result = response.choices[0].message.content
 
-        # Validate Score
         try:
             result["Score"] = max(0, min(100, round(float(result.get("Score", 0)))))
         except:
             result["Score"] = 0
 
-        # Validate Recommendation
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure other fields exist
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
