@@ -17,7 +17,7 @@ app.add_middleware(
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY missing")
+    raise Exception("OPENAI_API_KEY not set")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -39,7 +39,7 @@ JOB DESCRIPTION:
 RESUME:
 {data.resume}
 
-Return valid JSON only:
+Return strictly valid JSON only:
 
 {{
   "Score": number (0-100),
@@ -50,9 +50,9 @@ Return valid JSON only:
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Return strictly valid JSON only."},
+            {"role": "system", "content": "Return valid JSON only."},
             {"role": "user", "content": prompt}
         ],
         response_format={"type": "json_object"}
@@ -61,12 +61,7 @@ Return valid JSON only:
     result = json.loads(response.choices[0].message.content)
 
     result["Score"] = max(0, min(100, int(result.get("Score", 0))))
-
     if result.get("Recommendation") not in ["Shortlist", "Reject"]:
         result["Recommendation"] = "Reject"
 
     return result
-
-
-# IMPORTANT FOR VERCEL
-handler = app

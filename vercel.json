@@ -2,14 +2,8 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/analyze-resume.py",
+      "src": "api/index.py",
       "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/analyze-resume.py"
     }
   ]
 }
