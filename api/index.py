@@ -8,7 +8,7 @@ app = FastAPI()
 # Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Can restrict to your frontend domain if needed
+    allow_origins=["*"],  # Replace "*" with your frontend domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -50,7 +50,7 @@ JOB DESCRIPTION:
 RESUME:
 {resume}
 
-Return strictly valid JSON only, following this exact format:
+Return strictly valid JSON only, following this exact format and replace the example values appropriately:
 
 {{
   "Score": 85,
@@ -63,8 +63,8 @@ Return strictly valid JSON only, following this exact format:
 """
 
     try:
-        # Call GPT-4o-mini
-        response = client.chat.completions.create(
+        # Async call to OpenAI
+        response = await client.chat.completions.acreate(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Return valid JSON only."},
@@ -73,8 +73,8 @@ Return strictly valid JSON only, following this exact format:
             response_format={"type": "json_object"}
         )
 
-        result = response.choices[0].message.content
-        print("MODEL OUTPUT:", result)
+        result = response.choices[0].message.content  # Already a dict
+        print("MODEL OUTPUT:", result)  # Debugging
 
         # Validate Score
         try:
@@ -86,7 +86,7 @@ Return strictly valid JSON only, following this exact format:
         if result.get("Recommendation") not in ["Shortlist", "Reject"]:
             result["Recommendation"] = "Reject"
 
-        # Ensure other fields exist
+        # Ensure all other fields exist as strings
         for key in ["SkillsetMatch", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
