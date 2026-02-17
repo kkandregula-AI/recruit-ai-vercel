@@ -41,7 +41,7 @@ def default_response():
         "SkillsetMatch": "",
         "MissingSkills": "",
         "Summary": "",
-        "Recommendation": "Reject",
+        "Recommendation": "",
         "Name": "",
         "Email": ""
     }
@@ -76,8 +76,10 @@ Return strictly valid JSON only, following this exact format:
 
 {{
   "Score": 85,
+  "Role" : AI Engineer,
   "SkillsetMatch": "Python, FastAPI, Machine Learning",
-  "Summary": "Candidate is highly suitable for the role.",
+  "MissingSkills": "Agentic AI, Generative AI, Mainframe, DB2, CICS, DevOps",
+  "Summary": "Candidate is highly suitable for the role. He has extensive Experience in Python, Artificial Intelligence and excellent coding and analytical skills",
   "Recommendation": "Shortlist",
   "Name": "John Doe",
   "Email": "john.doe@example.com"
@@ -127,7 +129,7 @@ Return strictly valid JSON only, following this exact format:
             result["Recommendation"] = "Reject"
 
         # Ensure all other fields exist
-        for key in ["SkillsetMatch", "MissingSkills", "Summary", "Name", "Email"]:
+        for key in ["Role", "SkillsetMatch", "MissingSkills", "Summary", "Name", "Email"]:
             if key not in result or not isinstance(result[key], str):
                 result[key] = ""
 
