@@ -1,10 +1,8 @@
 import os
 import re
 import json
-from flask import Flask, request, jsonify
 from openai import OpenAI
 
-app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
@@ -31,16 +29,25 @@ def decide_recommendation(score):
         return "Reject"
 
 
-@app.route("/api/evaluate", methods=["POST"])
-def evaluate():
-    try:
-        data = request.get_json()
+def handler(request):
 
-        jd = data.get("jd", "")
-        resume = data.get("resume", "")
+    if request.method != "POST":
+        return {
+            "statusCode": 405,
+            "body": json.dumps({"error": "Only POST allowed"})
+        }
+
+    try:
+        body = json.loads(request.body)
+
+        jd = body.get("jd", "")
+        resume = body.get("resume", "")
 
         if not jd or not resume:
-            return jsonify({"error": "Both JD and Resume are required"}), 400
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Both JD and Resume are required"})
+            }
 
         name = extract_name(resume)
         email = extract_email(resume)
@@ -74,28 +81,25 @@ Resume:
         parsed = json.loads(ai_output)
 
         score = int(parsed.get("Score", 0))
-        role = parsed.get("Role", "")
-        matched = parsed.get("MatchedSkills", "")
-        missing = parsed.get("MissingSkills", "")
-        summary = parsed.get("Summary", "")
 
-        recommendation = decide_recommendation(score)
-
-        return jsonify({
+        result = {
             "Score": score,
-            "Role": role,
-            "SkillsetMatch": matched,
-            "MissingSkills": missing,
-            "Summary": summary,
-            "Recommendation": recommendation,
+            "Role": parsed.get("Role", ""),
+            "SkillsetMatch": parsed.get("MatchedSkills", ""),
+            "MissingSkills": parsed.get("MissingSkills", ""),
+            "Summary": parsed.get("Summary", ""),
+            "Recommendation": decide_recommendation(score),
             "Name": name,
             "Email": email
-        })
+        }
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(result)
+        }
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Recruit AI Running Successfully 🚀"
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
