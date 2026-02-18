@@ -6,13 +6,13 @@ import os
 import json
 
 # -------------------------------
-# FastAPI setup
+# FastAPI setup (DO NOT CHANGE)
 # -------------------------------
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # replace "*" with your frontend domain in production
+    allow_origins=["*"],  # Replace with frontend domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -23,6 +23,7 @@ app.add_middleware(
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     print("ERROR: OPENAI_API_KEY is NOT set!")
+
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # -------------------------------
@@ -38,102 +39,152 @@ class ResumeRequest(BaseModel):
 def default_response():
     return {
         "Score": 0,
+        "Role": "",
         "SkillsetMatch": "",
         "MissingSkills": "",
         "Summary": "",
-        "Recommendation": "",
+        "Recommendation": "Reject",
         "Name": "",
         "Email": ""
     }
 
 # -------------------------------
-# POST endpoint
+# POST endpoint (STABLE)
 # -------------------------------
 @app.post("/")
 def analyze_resume(data: ResumeRequest):
-    # Safety check: API key must be set
+
     if not OPENAI_API_KEY or not client:
         return {
-            "error": "OPENAI_API_KEY is not set. Please configure it in your environment variables."
+            "error": "OPENAI_API_KEY is not set."
         }
 
-    # Truncate inputs to avoid serverless timeout / large token issues
-    jd = data.jd[:1000]
-    resume = data.resume[:1000]
+    # Limit input size for serverless stability
+    jd = data.jd[:1200]
+    resume = data.resume[:1200]
 
     prompt = f"""
 You are an expert HR Recruitment AI.
 
-Evaluate the following Resume against the Job Description.
+Evaluate the Resume against the Job Description using professional hiring standards.
+
+SCORING FRAMEWORK:
+- 90–100: Excellent alignment, all critical skills match → Shortlist
+- 75–89: Strong alignment, minor skill gaps → Shortlist
+- 60–74: Moderate alignment, some important gaps → Use judgment
+- Below 60: Poor alignment or missing core requirements → Reject
+
+SCREENING CRITERIA:
+1. Compare required vs actual skills
+2. Identify critical missing skills
+3. Evaluate years and relevance of experience
+4. Check role alignment
+5. Decide if gaps are trainable or fundamental
+
+Return STRICTLY valid JSON only in this format:
+
+{{
+  "Score": 85,
+  "Role": "AI Engineer",
+  "MatchedSkills": "Python, FastAPI, Machine Learning",
+  "MissingSkills": "Agentic AI, DevOps",
+  "Summary": "Explain clearly why shortlisted or rejected based on skills, experience, and fit.",
+  "Recommendation": "Shortlist",
+  "Name": "John Doe",
+  "Email": "john.doe@example.com"
+}}
 
 JOB DESCRIPTION:
 {jd}
 
 RESUME:
 {resume}
-
-Return strictly valid JSON only, following this exact format:
-
-{{
-  "Score": 85,
-  "Role" : AI Engineer,
-  "SkillsetMatch": "Python, FastAPI, Machine Learning",
-  "MissingSkills": "Agentic AI, Generative AI, DevOps",
-  "Summary": "Candidate is highly suitable for the role. He has extensive Experience in Python, Artificial Intelligence and excellent coding and analytical skills",
-  "Recommendation": "Shortlist",
-  "Name": "John Doe",
-  "Email": "john.doe@example.com"
-}}
 """
 
     try:
-        # Synchronous GPT call (reliable in serverless)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a JSON-only HR assistant. NEVER output text outside JSON."
+                    "content": "You are a strict JSON-only HR screening assistant. Never output text outside JSON."
                 },
                 {"role": "user", "content": prompt}
             ],
+            temperature=0.2
         )
 
-        # Raw GPT output
         raw_content = response.choices[0].message.content.strip()
         print("GPT raw output:", raw_content)
 
-        # Extract first JSON block safely
+        # Extract JSON safely
         start = raw_content.find("{")
         end = raw_content.rfind("}") + 1
+
         if start == -1 or end == -1:
             return default_response()
 
         raw_json = raw_content[start:end]
 
-        # Parse JSON
         try:
             result = json.loads(raw_json)
-        except Exception as e:
-            print("Failed to parse GPT output:", e)
+        except:
             return default_response()
 
-        # Validate Score
+        # -------------------------------
+        # Score Validation
+        # -------------------------------
         try:
-            result["Score"] = max(0, min(100, round(float(result.get("Score", 0)))))
+            score = max(0, min(100, round(float(result.get("Score", 0)))))
         except:
-            result["Score"] = 0
+            score = 0
 
-        # Validate Recommendation
-        if result.get("Recommendation") not in ["Shortlist", "Reject"]:
-            result["Recommendation"] = "Reject"
+        # -------------------------------
+        # Recommendation Logic
+        # -------------------------------
+        gpt_recommendation = result.get("Recommendation", "Reject")
 
-        # Ensure all other fields exist
-        for key in ["Role", "SkillsetMatch", "MissingSkills", "Summary", "Name", "Email"]:
-            if key not in result or not isinstance(result[key], str):
-                result[key] = ""
+        if score >= 75:
+            final_recommendation = "Shortlist"
+        elif score < 60:
+            final_recommendation = "Reject"
+        else:
+            # 60–74 zone → trust GPT if valid
+            if gpt_recommendation in ["Shortlist", "Reject"]:
+                final_recommendation = gpt_recommendation
+            else:
+                final_recommendation = "Reject"
 
-        return result
+        # -------------------------------
+        # Safe Field Extraction
+        # -------------------------------
+        role = result.get("Role", "")
+        matched = result.get("MatchedSkills", "")
+        missing = result.get("MissingSkills", "")
+        summary = result.get("Summary", "")
+        name = result.get("Name", "")
+        email = result.get("Email", "")
+
+        role = role if isinstance(role, str) else ""
+        matched = matched if isinstance(matched, str) else ""
+        missing = missing if isinstance(missing, str) else ""
+        summary = summary if isinstance(summary, str) else ""
+        name = name if isinstance(name, str) else ""
+        email = email if isinstance(email, str) else ""
+
+        # -------------------------------
+        # Final Flat JSON Response
+        # -------------------------------
+        return {
+            "Score": score,
+            "Role": role,
+            "SkillsetMatch": matched,
+            "MissingSkills": missing,
+            "Summary": summary,
+            "Recommendation": final_recommendation,
+            "Name": name,
+            "Email": email
+        }
 
     except Exception as e:
         print("OpenAI API error:", e)
