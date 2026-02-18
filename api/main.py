@@ -1,9 +1,17 @@
 import os
 import re
 import json
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from openai import OpenAI
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+app = FastAPI()
+
+api_key = os.environ.get("OPENAI_API_KEY")
+if not api_key:
+    raise Exception("OPENAI_API_KEY not configured")
+
+client = OpenAI(api_key=api_key)
 
 
 def extract_name(resume_text):
@@ -29,25 +37,19 @@ def decide_recommendation(score):
         return "Reject"
 
 
-def handler(request):
-
-    if request.method != "POST":
-        return {
-            "statusCode": 405,
-            "body": json.dumps({"error": "Only POST allowed"})
-        }
-
+@app.post("/api/evaluate")
+async def evaluate(request: Request):
     try:
-        body = json.loads(request.body)
+        body = await request.json()
 
         jd = body.get("jd", "")
         resume = body.get("resume", "")
 
         if not jd or not resume:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({"error": "Both JD and Resume are required"})
-            }
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Both JD and Resume are required"}
+            )
 
         name = extract_name(resume)
         email = extract_email(resume)
@@ -82,7 +84,7 @@ Resume:
 
         score = int(parsed.get("Score", 0))
 
-        result = {
+        return {
             "Score": score,
             "Role": parsed.get("Role", ""),
             "SkillsetMatch": parsed.get("MatchedSkills", ""),
@@ -93,13 +95,13 @@ Resume:
             "Email": email
         }
 
-        return {
-            "statusCode": 200,
-            "body": json.dumps(result)
-        }
-
     except Exception as e:
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": str(e)})
-        }
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+@app.get("/")
+def health():
+    return {"status": "Recruit AI Running 🚀"}
