@@ -1,200 +1,128 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from openai import OpenAI
 import os
-import json
 import re
+import json
+from flask import Flask, request, jsonify
+from openai import OpenAI
 
-# ---------------------------------
-# FastAPI Setup
-# ---------------------------------
-app = FastAPI()
+app = Flask(__name__)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# ---------------------------------
-# OpenAI Setup
-# ---------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not OPENAI_API_KEY:
-    print("ERROR: OPENAI_API_KEY is NOT set!")
+# -----------------------------
+# Helper: Extract Name
+# -----------------------------
+def extract_name(resume_text):
+    lines = resume_text.strip().split("\n")
+    for line in lines[:5]:
+        line = line.strip()
+        if len(line.split()) <= 4 and not "@" in line:
+            return line
+    return "Unknown Candidate"
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# ---------------------------------
-# Input Model (ONLY jd + resume)
-# ---------------------------------
-class ResumeRequest(BaseModel):
-    jd: str
-    resume: str
+# -----------------------------
+# Helper: Extract Email
+# -----------------------------
+def extract_email(resume_text):
+    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', resume_text)
+    return match.group(0) if match else ""
 
-# ---------------------------------
-# Safe Default Response
-# ---------------------------------
-def default_response():
-    return {
-        "Candidate": {
-            "Name": "",
-            "Email": "",
-            "Role": "Not Specified"
-        },
-        "Evaluation": {
-            "Score": 0,
-            "Recommendation": "Reject"
-        },
-        "Skills": {
-            "Matched": "",
-            "Missing": ""
-        },
-        "Summary": "Evaluation could not be completed."
-    }
 
-# ---------------------------------
-# Recommendation Logic (Deterministic)
-# ---------------------------------
-def decide_recommendation(score: int):
-    return "Shortlist" if score >= 70 else "Reject"
+# -----------------------------
+# Recommendation Logic
+# -----------------------------
+def decide_recommendation(score):
+    if score >= 75:
+        return "Shortlist"
+    elif score >= 50:
+        return "Consider"
+    else:
+        return "Reject"
 
-# ---------------------------------
-# Extract Role Fallback (if GPT misses)
-# ---------------------------------
-def extract_role_from_jd(jd_text):
-    role_pattern = r"(Senior|Junior|Lead)?\s?[A-Za-z ]+(Developer|Engineer|Executive|Manager|Analyst|Consultant|Specialist)"
-    match = re.search(role_pattern, jd_text, re.IGNORECASE)
-    return match.group(0) if match else "Not Specified"
 
-# ---------------------------------
-# Main Endpoint
-# ---------------------------------
-@app.post("/")
-def analyze_resume(data: ResumeRequest):
+# -----------------------------
+# Main Evaluation Route
+# -----------------------------
+@app.route("/evaluate", methods=["POST"])
+def evaluate():
 
-    if not client:
-        return {"error": "OPENAI_API_KEY not configured"}
-
-    jd_text = data.jd[:2000]
-    resume_text = data.resume[:2000]
-
-    # ---------------------------------
-    # GPT Call (Fully Protected)
-    # ---------------------------------
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a strict JSON-only HR screening assistant. Never output text outside JSON."
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Evaluate the resume against the job description.
+        data = request.get_json()
 
-Resume:
-{resume_text}
+        jd = data.get("jd", "")
+        resume = data.get("resume", "")
+
+        if not jd or not resume:
+            return jsonify({"error": "Both JD and Resume are required"}), 400
+
+        # Extract name & email automatically
+        name = extract_name(resume)
+        email = extract_email(resume)
+
+        # GPT Prompt
+        prompt = f"""
+You are an HR AI assistant.
+
+Compare the following Job Description and Resume.
+
+Return STRICT JSON with:
+- Score (0-100 integer)
+- Role (Job role inferred from JD)
+- MatchedSkills (comma separated string)
+- MissingSkills (comma separated string)
+- Summary (professional 4-5 line HR brief about candidate background and suitability)
 
 Job Description:
-{jd_text}
+{jd}
 
-Instructions:
-1. Identify the target Role from the Job Description.
-2. Extract candidate Name and Email from resume.
-3. Extract matching skills.
-4. Extract missing skills.
-5. Assign a match score between 0-100 based on skill overlap.
-6. Provide a professional HR summary (brief paragraph).
-
-Return STRICT JSON only in this format:
-
-{{
-  "Score": 0,
-  "Role": "",
-  "SkillsetMatch": [],
-  "MissingSkills": [],
-  "Summary": "",
-  "Name": "",
-  "Email": ""
-}}
+Resume:
+{resume}
 """
-                }
-            ],
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
         )
 
-        raw_output = response.choices[0].message.content.strip()
+        ai_output = response.choices[0].message.content
 
-    except Exception as e:
-        print("OPENAI ERROR:", str(e))
-        return default_response()
+        # Clean markdown if present
+        ai_output = ai_output.replace("```json", "").replace("```", "").strip()
 
-    if not raw_output:
-        print("Empty GPT response")
-        return default_response()
+        parsed = json.loads(ai_output)
 
-    # ---------------------------------
-    # Safe JSON Parsing
-    # ---------------------------------
-    try:
-        start = raw_output.index("{")
-        end = raw_output.rindex("}") + 1
-        parsed = json.loads(raw_output[start:end])
-    except Exception as e:
-        print("JSON PARSE ERROR:", str(e))
-        print("RAW OUTPUT:", raw_output)
-        return default_response()
+        score = int(parsed.get("Score", 0))
+        role = parsed.get("Role", "")
+        matched = parsed.get("MatchedSkills", "")
+        missing = parsed.get("MissingSkills", "")
+        summary_text = parsed.get("Summary", "")
 
-    # ---------------------------------
-    # Sanitize & Extract Fields
-    # ---------------------------------
-    score = parsed.get("Score", 0)
-    try:
-        score = int(float(score))
-        score = max(0, min(100, score))
-    except:
-        score = 0
+        recommendation = decide_recommendation(score)
 
-    role = parsed.get("Role", "")
-    if not role:
-        role = extract_role_from_jd(jd_text)
-
-    matched = parsed.get("SkillsetMatch", [])
-    missing = parsed.get("MissingSkills", [])
-
-    if not isinstance(matched, list):
-        matched = [s.strip() for s in str(matched).split(",") if s.strip()]
-
-    if not isinstance(missing, list):
-        missing = [s.strip() for s in str(missing).split(",") if s.strip()]
-
-    summary_text = parsed.get("Summary", "")
-    name = parsed.get("Name", "")
-    email = parsed.get("Email", "")
-
-    recommendation = decide_recommendation(score)
-
-    # ---------------------------------
-    # Final Structured Output
-    # ---------------------------------
-    return {
-        "Candidate": {
-            "Name": name,
-            "Email": email,
-            "Role": role
-        },
-        "Evaluation": {
+        return jsonify({
             "Score": score,
-            "Recommendation": recommendation
-        },
-        "Skills": {
-            "Matched": ", ".join(matched),
-            "Missing": ", ".join(missing)
-        },
-        "Summary": summary_text
-    }
+            "Role": role,
+            "SkillsetMatch": matched,
+            "MissingSkills": missing,
+            "Summary": summary_text,
+            "Recommendation": recommendation,
+            "Name": name,
+            "Email": email
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# -----------------------------
+# Health Check
+# -----------------------------
+@app.route("/", methods=["GET"])
+def home():
+    return "Recruit AI Running Successfully 🚀"
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
