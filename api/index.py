@@ -33,8 +33,6 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 class ResumeRequest(BaseModel):
     jd: str
     resume: str
-    candidate_name: str = ""
-    candidate_email: str = ""
 
 # -------------------------------
 # Fallback response
@@ -97,31 +95,29 @@ def format_summary_html(matched_skills, missing_skills, reasoning_text=""):
 # Cached GPT evaluation
 # -------------------------------
 @lru_cache(maxsize=128)
-def cached_gpt_evaluate(jd_text: str, resume_text: str, candidate_name: str, candidate_email: str, must_weight: float, nice_weight: float):
+def cached_gpt_evaluate(jd_text: str, resume_text: str, must_weight: float, nice_weight: float):
     prompt = f"""
 You are an expert HR Recruitment AI.
-
-Candidate Name: {candidate_name}
-Candidate Email: {candidate_email}
-
-Job Description:
-{jd_text}
 
 Resume:
 {resume_text}
 
+Job Description:
+{jd_text}
+
 Instructions:
-1. Extract must-have and nice-to-have skills from JD and candidate.
-2. Calculate a matching score (0-100) using these adaptive weights:
+1. Extract the candidate's Name and Email from the resume.
+2. Extract must-have and nice-to-have skills from JD and candidate.
+3. Calculate a matching score (0-100) using adaptive weights:
    Must-have skills weight: {must_weight}%
    Nice-to-have skills weight: {nice_weight}%
-3. Provide a recommendation: "Shortlist" or "Reject"
-4. Generate a summary with inline bullets highlighting skills:
+4. Provide a recommendation: "Shortlist" or "Reject"
+5. Generate a summary with inline bullets highlighting skills:
    - Matched skills: green
    - Missing skills: red
-5. Return strictly JSON with fields:
+6. Return strictly JSON with fields:
    Score, SkillsetMatch, MissingSkills, Summary, Recommendation, Name, Email
-6. Do not output any text outside JSON.
+7. Do not output any text outside JSON.
 """
     try:
         response = client.chat.completions.create(
@@ -140,7 +136,9 @@ Instructions:
 # Fallback skill extraction
 # -------------------------------
 def fallback_skills(text):
-    common_skills = ["Python", "Java", "C++", "Machine Learning", "AI", "FastAPI", "DevOps", "Generative AI", "Agentic AI"]
+    common_skills = ["Python", "Java", "C++", "Machine Learning", "AI", "FastAPI", "DevOps", "Generative AI", "Agentic AI",
+                     "Sales experience", "Understanding client needs", "Communicating product value",
+                     "Building sales pipelines", "Nurturing leads", "Closing deals"]
     return [skill for skill in common_skills if re.search(rf"\b{re.escape(skill)}\b", text, re.IGNORECASE)]
 
 # -------------------------------
@@ -160,10 +158,14 @@ def analyze_resume(data: ResumeRequest):
     nice_weight = weights["nice_to_have_weight"]
 
     # Single GPT call
-    raw_output = cached_gpt_evaluate(jd_text, resume_text, data.candidate_name, data.candidate_email, must_weight, nice_weight)
-    
+    try:
+        raw_output = cached_gpt_evaluate(jd_text, resume_text, must_weight, nice_weight)
+    except Exception as e:
+        print("GPT call failed:", e)
+        raw_output = None
+
     if not raw_output:
-        # fallback simple skill match
+        # fallback skill match
         jd_skills = fallback_skills(jd_text)
         candidate_skills = fallback_skills(resume_text)
         matching = [s for s in candidate_skills if s in jd_skills]
@@ -177,18 +179,17 @@ def analyze_resume(data: ResumeRequest):
             "MissingSkills": ", ".join(missing),
             "Summary": summary,
             "Recommendation": recommendation,
-            "Name": data.candidate_name,
-            "Email": data.candidate_email
+            "Name": "",
+            "Email": ""
         }
 
-    # Parse GPT JSON
-    start = raw_output.find("{")
-    end = raw_output.rfind("}") + 1
-    if start == -1 or end == -1:
-        return default_response()
-
-    raw_json = raw_output[start:end]
+    # Parse GPT JSON safely
     try:
+        start = raw_output.find("{")
+        end = raw_output.rfind("}") + 1
+        if start == -1 or end == -1:
+            return default_response()
+        raw_json = raw_output[start:end]
         result = json.loads(raw_json)
     except Exception as e:
         print("Failed to parse GPT output:", e)
@@ -196,34 +197,38 @@ def analyze_resume(data: ResumeRequest):
 
     # Ensure all fields exist
     for key in ["Score", "SkillsetMatch", "MissingSkills", "Summary", "Recommendation", "Name", "Email"]:
-        if key not in result:
+        if key not in result or result[key] is None:
             result[key] = "" if key != "Score" else 0
 
-    # Fix SkillsetMatch / MissingSkills to be strings
-    if isinstance(result.get("SkillsetMatch"), list):
-        matched_skills = result["SkillsetMatch"]
+    # Convert lists to strings
+    matched_skills = result.get("SkillsetMatch", [])
+    if isinstance(matched_skills, list):
         result["SkillsetMatch"] = ", ".join(matched_skills)
     else:
-        matched_skills = result.get("SkillsetMatch", "").split(", ")
+        matched_skills = [s.strip() for s in str(result.get("SkillsetMatch", "")).split(",") if s.strip()]
+        result["SkillsetMatch"] = ", ".join(matched_skills)
 
-    if isinstance(result.get("MissingSkills"), list):
-        missing_skills = result["MissingSkills"]
+    missing_skills = result.get("MissingSkills", [])
+    if isinstance(missing_skills, list):
         result["MissingSkills"] = ", ".join(missing_skills)
     else:
-        missing_skills = result.get("MissingSkills", "").split(", ")
+        missing_skills = [s.strip() for s in str(result.get("MissingSkills", "")).split(",") if s.strip()]
+        result["MissingSkills"] = ", ".join(missing_skills)
 
-    # Reformat Summary with inline bullets
+    # Clean inline Summary
     reasoning_text = result.get("Summary", "")
     result["Summary"] = format_summary_html(matched_skills, missing_skills, reasoning_text)
 
-    # Validate Score & Recommendation
+    # Validate score & recommendation
     try:
-        result["Score"] = max(0, min(100, round(float(result.get("Score",0)))))
+        result["Score"] = max(0, min(100, round(float(result.get("Score", 0)))))
     except:
         result["Score"] = 0
     if result.get("Recommendation") not in ["Shortlist", "Reject"]:
         result["Recommendation"] = decide_recommendation(result["Score"])
-    result["Name"] = data.candidate_name or result.get("Name","")
-    result["Email"] = data.candidate_email or result.get("Email","")
+
+    # Name and Email extracted from GPT resume parsing
+    result["Name"] = result.get("Name", "")
+    result["Email"] = result.get("Email", "")
 
     return result
