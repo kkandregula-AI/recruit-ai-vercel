@@ -51,7 +51,7 @@ def default_response():
     }
 
 # -------------------------------
-# Dynamic weight calculation based on JD keywords
+# Dynamic weight calculation
 # -------------------------------
 def dynamic_weight(skill_text: str):
     must_keywords = ["must-have", "required", "essential", "mandatory"]
@@ -82,13 +82,22 @@ def decide_recommendation(score):
     return "Reject"
 
 # -------------------------------
-# Cached GPT evaluation (single call)
+# Format clean Summary with colored inline bullets
+# -------------------------------
+def format_summary_html(matched_skills, missing_skills, reasoning_text=""):
+    matched_html = "".join([f"• <span style='color:green'>{s}</span><br>" for s in matched_skills])
+    missing_html = "".join([f"• <span style='color:red'>{s}</span><br>" for s in missing_skills])
+    summary = "<b>Matched Skills:</b><br>" + (matched_html if matched_html else "None<br>")
+    summary += "<b>Missing Skills:</b><br>" + (missing_html if missing_html else "None<br>")
+    if reasoning_text:
+        summary += "<b>Reasoning:</b><br>" + reasoning_text
+    return summary
+
+# -------------------------------
+# Cached GPT evaluation
 # -------------------------------
 @lru_cache(maxsize=128)
 def cached_gpt_evaluate(jd_text: str, resume_text: str, candidate_name: str, candidate_email: str, must_weight: float, nice_weight: float):
-    """
-    GPT call: extract skills, calculate weighted score, generate summary with highlighted skills
-    """
     prompt = f"""
 You are an expert HR Recruitment AI.
 
@@ -107,13 +116,12 @@ Instructions:
    Must-have skills weight: {must_weight}%
    Nice-to-have skills weight: {nice_weight}%
 3. Provide a recommendation: "Shortlist" or "Reject"
-4. Generate a summary that visually highlights skills:
+4. Generate a summary with inline bullets highlighting skills:
    - Matched skills: green
    - Missing skills: red
 5. Return strictly JSON with fields:
    Score, SkillsetMatch, MissingSkills, Summary, Recommendation, Name, Email
-6. Use HTML or Markdown formatting in Summary for color highlighting.
-Do not output any text outside JSON.
+6. Do not output any text outside JSON.
 """
     try:
         response = client.chat.completions.create(
@@ -141,32 +149,28 @@ def fallback_skills(text):
 @app.post("/")
 def analyze_resume(data: ResumeRequest):
     if not OPENAI_API_KEY or not client:
-        return {"error": "OPENAI_API_KEY is not set. Please configure it in your environment variables."}
+        return {"error": "OPENAI_API_KEY is not set."}
 
     jd_text = data.jd[:1000]
     resume_text = data.resume[:1000]
 
-    # -------------------------------
     # Adaptive weights
-    # -------------------------------
     weights = dynamic_weight(jd_text)
     must_weight = weights["must_have_weight"]
     nice_weight = weights["nice_to_have_weight"]
 
-    # -------------------------------
     # Single GPT call
-    # -------------------------------
     raw_output = cached_gpt_evaluate(jd_text, resume_text, data.candidate_name, data.candidate_email, must_weight, nice_weight)
+    
     if not raw_output:
+        # fallback simple skill match
         jd_skills = fallback_skills(jd_text)
         candidate_skills = fallback_skills(resume_text)
         matching = [s for s in candidate_skills if s in jd_skills]
         missing = [s for s in jd_skills if s not in candidate_skills]
         score = round((len(matching)/max(1,len(jd_skills)))*100, 2)
         recommendation = decide_recommendation(score)
-        # fallback visual highlighting in summary
-        summary = "Matched skills: " + ", ".join([f"<span style='color:green'>{s}</span>" for s in matching])
-        summary += "<br>Missing skills: " + ", ".join([f"<span style='color:red'>{s}</span>" for s in missing])
+        summary = format_summary_html(matching, missing, reasoning_text="Fallback: GPT unavailable, basic skill matching used.")
         return {
             "Score": score,
             "SkillsetMatch": ", ".join(matching),
@@ -177,9 +181,7 @@ def analyze_resume(data: ResumeRequest):
             "Email": data.candidate_email
         }
 
-    # -------------------------------
-    # Parse JSON from GPT
-    # -------------------------------
+    # Parse GPT JSON
     start = raw_output.find("{")
     end = raw_output.rfind("}") + 1
     if start == -1 or end == -1:
@@ -192,12 +194,27 @@ def analyze_resume(data: ResumeRequest):
         print("Failed to parse GPT output:", e)
         return default_response()
 
-    # -------------------------------
     # Ensure all fields exist
-    # -------------------------------
     for key in ["Score", "SkillsetMatch", "MissingSkills", "Summary", "Recommendation", "Name", "Email"]:
         if key not in result:
             result[key] = "" if key != "Score" else 0
+
+    # Fix SkillsetMatch / MissingSkills to be strings
+    if isinstance(result.get("SkillsetMatch"), list):
+        matched_skills = result["SkillsetMatch"]
+        result["SkillsetMatch"] = ", ".join(matched_skills)
+    else:
+        matched_skills = result.get("SkillsetMatch", "").split(", ")
+
+    if isinstance(result.get("MissingSkills"), list):
+        missing_skills = result["MissingSkills"]
+        result["MissingSkills"] = ", ".join(missing_skills)
+    else:
+        missing_skills = result.get("MissingSkills", "").split(", ")
+
+    # Reformat Summary with inline bullets
+    reasoning_text = result.get("Summary", "")
+    result["Summary"] = format_summary_html(matched_skills, missing_skills, reasoning_text)
 
     # Validate Score & Recommendation
     try:
