@@ -6,9 +6,9 @@ import os
 import json
 import re
 
-# -------------------------------
-# FastAPI setup
-# -------------------------------
+# ---------------------------------
+# FastAPI Setup
+# ---------------------------------
 app = FastAPI()
 
 app.add_middleware(
@@ -18,9 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -------------------------------
-# OpenAI setup
-# -------------------------------
+# ---------------------------------
+# OpenAI Setup
+# ---------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
@@ -28,84 +28,75 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# -------------------------------
-# Input model (ONLY jd + resume)
-# -------------------------------
+# ---------------------------------
+# Input Model (ONLY jd + resume)
+# ---------------------------------
 class ResumeRequest(BaseModel):
     jd: str
     resume: str
 
-# -------------------------------
-# Default safe response
-# -------------------------------
+# ---------------------------------
+# Safe Default Response
+# ---------------------------------
 def default_response():
     return {
-        "Score": 0,
-        "SkillsetMatch": "",
-        "MissingSkills": "",
-        "Summary": "Evaluation could not be completed.",
-        "Recommendation": "Reject",
-        "Name": "",
-        "Email": ""
+        "Candidate": {
+            "Name": "",
+            "Email": "",
+            "Role": "Not Specified"
+        },
+        "Evaluation": {
+            "Score": 0,
+            "Recommendation": "Reject"
+        },
+        "Skills": {
+            "Matched": "",
+            "Missing": ""
+        },
+        "Summary": "Evaluation could not be completed."
     }
 
-# -------------------------------
-# Score Benchmark Logic
-# -------------------------------
+# ---------------------------------
+# Recommendation Logic (Deterministic)
+# ---------------------------------
 def decide_recommendation(score: int):
-    if score >= 70:
-        return "Shortlist"
-    return "Reject"
+    return "Shortlist" if score >= 70 else "Reject"
 
-# -------------------------------
-# Clean HTML Summary formatter
-# -------------------------------
-def format_summary(matched, missing, reasoning=""):
-    matched_html = "".join(
-        [f"• <span style='color:green'>{s}</span><br>" for s in matched]
-    )
-    missing_html = "".join(
-        [f"• <span style='color:red'>{s}</span><br>" for s in missing]
-    )
+# ---------------------------------
+# Extract Role Fallback (if GPT misses)
+# ---------------------------------
+def extract_role_from_jd(jd_text):
+    role_pattern = r"(Senior|Junior|Lead)?\s?[A-Za-z ]+(Developer|Engineer|Executive|Manager|Analyst|Consultant|Specialist)"
+    match = re.search(role_pattern, jd_text, re.IGNORECASE)
+    return match.group(0) if match else "Not Specified"
 
-    summary = "<b>Matched Skills:</b><br>"
-    summary += matched_html if matched_html else "None<br>"
-
-    summary += "<br><b>Missing Skills:</b><br>"
-    summary += missing_html if missing_html else "None<br>"
-
-    if reasoning:
-        summary += "<br><b>Reasoning:</b><br>" + reasoning
-
-    return summary
-
-# -------------------------------
+# ---------------------------------
 # Main Endpoint
-# -------------------------------
+# ---------------------------------
 @app.post("/")
 def analyze_resume(data: ResumeRequest):
 
     if not client:
         return {"error": "OPENAI_API_KEY not configured"}
 
-    jd_text = data.jd[:1500]
-    resume_text = data.resume[:1500]
+    jd_text = data.jd[:2000]
+    resume_text = data.resume[:2000]
 
-    # -------------------------------
-    # GPT CALL (fully protected)
-    # -------------------------------
+    # ---------------------------------
+    # GPT Call (Fully Protected)
+    # ---------------------------------
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a strict JSON-only HR assistant. Never output text outside JSON."
+                    "content": "You are a strict JSON-only HR screening assistant. Never output text outside JSON."
                 },
                 {
                     "role": "user",
                     "content": f"""
-Evaluate the following resume against the job description.
+Evaluate the resume against the job description.
 
 Resume:
 {resume_text}
@@ -114,20 +105,21 @@ Job Description:
 {jd_text}
 
 Instructions:
-1. Extract candidate Name and Email from resume.
-2. Extract matching skills.
-3. Extract missing skills.
-4. Calculate a match score between 0-100.
-5. Provide recommendation: Shortlist if score >=70 else Reject.
+1. Identify the target Role from the Job Description.
+2. Extract candidate Name and Email from resume.
+3. Extract matching skills.
+4. Extract missing skills.
+5. Assign a match score between 0-100 based on skill overlap.
+6. Provide a professional HR summary (brief paragraph).
 
 Return STRICT JSON only in this format:
 
 {{
   "Score": 0,
+  "Role": "",
   "SkillsetMatch": [],
   "MissingSkills": [],
   "Summary": "",
-  "Recommendation": "",
   "Name": "",
   "Email": ""
 }}
@@ -146,9 +138,9 @@ Return STRICT JSON only in this format:
         print("Empty GPT response")
         return default_response()
 
-    # -------------------------------
+    # ---------------------------------
     # Safe JSON Parsing
-    # -------------------------------
+    # ---------------------------------
     try:
         start = raw_output.index("{")
         end = raw_output.rindex("}") + 1
@@ -158,15 +150,19 @@ Return STRICT JSON only in this format:
         print("RAW OUTPUT:", raw_output)
         return default_response()
 
-    # -------------------------------
-    # Extract & sanitize fields
-    # -------------------------------
+    # ---------------------------------
+    # Sanitize & Extract Fields
+    # ---------------------------------
     score = parsed.get("Score", 0)
     try:
         score = int(float(score))
         score = max(0, min(100, score))
     except:
         score = 0
+
+    role = parsed.get("Role", "")
+    if not role:
+        role = extract_role_from_jd(jd_text)
 
     matched = parsed.get("SkillsetMatch", [])
     missing = parsed.get("MissingSkills", [])
@@ -177,28 +173,28 @@ Return STRICT JSON only in this format:
     if not isinstance(missing, list):
         missing = [s.strip() for s in str(missing).split(",") if s.strip()]
 
-    reasoning = parsed.get("Summary", "")
-
-    recommendation = decide_recommendation(score)
-
+    summary_text = parsed.get("Summary", "")
     name = parsed.get("Name", "")
     email = parsed.get("Email", "")
 
-    # -------------------------------
-    # Clean formatted summary
-    # -------------------------------
-    summary = format_summary(matched, missing, reasoning)
+    recommendation = decide_recommendation(score)
 
-    # -------------------------------
-    # Final Safe Output
-    # -------------------------------
+    # ---------------------------------
+    # Final Structured Output
+    # ---------------------------------
     return {
-        "Score": score,
-        "SkillsetMatch": ", ".join(matched),
-        "MissingSkills": ", ".join(missing),
-        "Summary": summary,
-        "Recommendation": recommendation,
-        "Name": name,
-        "Email": email
+        "Candidate": {
+            "Name": name,
+            "Email": email,
+            "Role": role
+        },
+        "Evaluation": {
+            "Score": score,
+            "Recommendation": recommendation
+        },
+        "Skills": {
+            "Matched": ", ".join(matched),
+            "Missing": ", ".join(missing)
+        },
+        "Summary": summary_text
     }
- 
